@@ -1,4 +1,4 @@
-from hmmjp_env.hmmjpenv import HMMJPEnv, HMMParameters
+from hmmjp_env.hmjp_sustain import HMMJPEnvSustAct, HMMParameters
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import integrate
@@ -46,10 +46,13 @@ def modelcheck(thetas):
     plt.show()
     return kstest(thetas, 'expon')
 
+def comp_arr_sequence():
+    pass
+
 
 if __name__ == '__main__':
     params = HMMParameters()
-    env = HMMJPEnv(params=params, t_terminal=1000)
+    env = HMMJPEnvSustAct(params=params, t_terminal=1000)
 
     #n_steps = 20000
     env.reset()
