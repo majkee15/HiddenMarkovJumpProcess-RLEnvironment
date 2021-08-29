@@ -1,8 +1,11 @@
-from hmmjp_env.hmjp_sustain import HMMJPEnvSustAct, HMMParameters
+from hmjp_env.hmjp_sustain import HMJPEnvSustAct, HMMParametersSust
+from hmjp_env.hmjp import HMJPEnv, HMJPParameters
 import matplotlib.pyplot as plt
+
 import numpy as np
 from scipy import integrate
 from scipy.stats import probplot, expon, kstest
+
 
 def residuals(arrivals, intensity, t_vec):
     thetas = np.zeros(len(arrivals) - 1)
@@ -46,27 +49,46 @@ def modelcheck(thetas):
     plt.show()
     return kstest(thetas, 'expon')
 
-def comp_arr_sequence():
-    pass
+
+def simulate_env(env):
+    env.reset()
+    # for step in range(n_steps):
+    # env.step(1)
+    done = False
+    rew_vec = []
+    ws = []
+    ls = []
+    i = 0
+
+    while env.current_time < env.t_terminal:
+        if env.current_step == 500:
+            s_next, rew, done, _ = env.step(0)
+        else:
+            s_next, rew, done, _ = env.step(0)
+        rew_vec.append(rew)
+        ws.append(s_next[1])
+        ls.append(s_next[0])
+        i += 1
+
+    return env
 
 
 if __name__ == '__main__':
-    params = HMMParameters()
-    env = HMMJPEnvSustAct(params=params, t_terminal=1000)
+    env = []
 
-    #n_steps = 20000
-    env.reset()
-    #for step in range(n_steps):
-    env.step(0)
-    while not env.done:
-        if env.current_step == 500:
-            env.step(0)
-        else:
-            env.step(0)
+    params0 = HMMParametersSust()
+    env.append(HMJPEnvSustAct(params=params0, t_terminal=1000, track_intensity=True, reward_shaping='continuous'))
 
-    print(env.arrivals)
-    res = residuals(env.arrivals, env.intensity_estimate_vec, env.time_vec)
-    print(res)
+    params1 = HMJPParameters()
+    env.append(HMJPEnv(params=params1, t_terminal=1000, track_intensity=True, reward_shaping='discrete'))
+
+    process_index = 1
+
+    simulate_env(env[process_index])
+    res = residuals(env[process_index].arrivals, env[process_index].true_intensity(), env[process_index].time_vec)
+    # print(res)
     print(modelcheck(res))
+
+    plt.plot(env[process_index].intensity_estimate_vec)
 
 

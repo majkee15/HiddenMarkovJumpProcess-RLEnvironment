@@ -10,7 +10,7 @@ class HMMParametersSust:
     """
     Sample Controlled HMM Parameter dataclass
     """
-    p: np.ndarray = np.array([[0.95, 0.1], [0.1, 0.5]])
+    p: np.ndarray = np.array([[0.8, 0.3], [0.1, 0.5]])
     Lamb: np.ndarray = np.array([[0.2, 1.0], [3.0, 2.0]])
     lamb: tuple = (0.1, 1.5)
     pa: float = 0.65
@@ -38,7 +38,6 @@ class HMJPEnvSustAct(gym.Env):
         self.params = params
         self.track_intensity = track_intensity
         self.t_terminal = t_terminal
-        self.true_intensity = track_intensity
         self.reward_shaping = reward_shaping
 
         self.observation_space = gym.spaces.Box(low=np.array([MIN_LAMBDA, MIN_ACCOUNT_BALANCE]),
@@ -99,7 +98,6 @@ class HMJPEnvSustAct(gym.Env):
         # unobservable states
         # HMM state state = {0, 1} ~ {L, H}
         self.M = np.random.choice((0, 1))
-        self.true_intensity = []
         self.state_arrivals = [0.0]
         self.state_history = [self.M]
 
@@ -274,14 +272,24 @@ class HMJPEnvSustAct(gym.Env):
     def __str__(self):
         return f'{self.__class__} -- pi1: {self.pih1}, pih2: {self.pih2}, lambdainf: {self.lambdainf}'
 
+    def true_intensity(self):
+        true_intensity_vec = np.ones_like(self.time_vec) * self.params.lamb[self.state_history[0]]
+        for i, arr in enumerate(self.state_arrivals):
+            true_intensity_vec[self.time_vec > self.state_arrivals[i]] = self.params.lamb[self.state_history[i]]
+
+        return true_intensity_vec
+
+
 
 if __name__ == '__main__':
     pars = HMMParametersSust()
     # print(pars.lamb[0])
     env = HMJPEnvSustAct(pars)
     print(env)
-    for i in range(10000):
-        if not env.done:
-            env.step(1)
+    while env.current_time < 100:
+        env.step(0)
 
     print(env)
+    print(env.state_history)
+    plt.plot(env.time_vec, env.true_intensity())
+    plt.show()

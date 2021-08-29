@@ -9,11 +9,12 @@ class HMJPParameters:
     """
     Sample Controlled HMM Parameter dataclass
     """
-    p: np.ndarray = np.array([0.95, 0.1])
+    # first are inaction parameters
+    p: np.ndarray = np.array([[0.95, 0.1], [0.6, 1.0], [0.3, 1.0], [0.1, 1.0]])
     Lamb: np.ndarray = np.array([0.2, 1.0])
     lamb: tuple = (0.1, 1.5)
-    pa: np.ndarray = np.array([0.65, 0.9])
-    c: np.ndarray = np.array([1.0, 3.0])
+    p#a: np.ndarray = np.array([0.0, 0.4, 0.7, 0.9])
+    c: np.ndarray = np.array([0.0, 1.0, 2.0, 3.0])
     rho: float = 0.15
 
 
@@ -37,7 +38,6 @@ class HMJPEnv(gym.Env):
         self.params = params
         self.track_intensity = track_intensity
         self.t_terminal = t_terminal
-        self.true_intensity = track_intensity
         self.reward_shaping = reward_shaping
 
         self.observation_space = gym.spaces.Box(low=np.array([MIN_LAMBDA, MIN_ACCOUNT_BALANCE]),
@@ -50,15 +50,14 @@ class HMJPEnv(gym.Env):
 
     @property
     def delta1(self):
-        return (self.params.lamb[1] - self.params.lamb[0]) + (1 - self.params.p[1]) * self.params.Lamb[1] + \
+        return (self.params.lamb[1] - self.params.lamb[0]) + (1 - self.params.p[0, 1]) * self.params.Lamb[1] + \
                (1 - self.params.p[0, 0]) * self.params.Lamb[0]
 
     @property
     def delta2(self):
         return np.sqrt(
             self.delta1 ** 2 - 4 * (self.params.lamb[1] - self.params.lamb[0]) *
-            self.params.Lamb[0, 0]
-            * (1 - self.params.p[0, 0]))
+            self.params.Lamb[0] * (1 - self.params.p[0, 0]))
 
     @property
     def pih1(self):
@@ -96,7 +95,6 @@ class HMJPEnv(gym.Env):
         # unobservable states
         # HMM state state = {0, 1} ~ {L, H}
         self.M = np.random.choice((0, 1))
-        self.true_intensity = []
         self.state_arrivals = [0.0]
         self.state_history = [self.M]
 
@@ -109,18 +107,27 @@ class HMJPEnv(gym.Env):
         # self.Pih_estimate = self.pih1
         self.Pih_estimate = np.random.uniform(0.0, 1.0)
         self.Pi_last_jump = self.Pih_estimate
+        self.last_jump = 0.0
         self.curent_w = np.random.uniform(MIN_ACCOUNT_BALANCE, MAX_ACCOUNT_BALANCE)
         self.current_state = np.array([0.0, self.curent_w])
         self.comp_intensity()
 
         return self.current_state
 
-    def decay_Pih(self):
+    def decay_Pih(self, action):
         # probability that HMM is in the state H
-        denominator = 1 + np.divide(self.Pi_last_jump - self.pih1,
-                                    self.pih2 - self.Pi_last_jump) * np.exp(
-            -(self.pih2 - self.pih1) * (self.current_time - self.arrivals[-1]))
-        self.Pih_estimate = self.pih2 - np.divide(self.pih2 - self.pih1, denominator)
+        if action > 0:
+            new_estimate = self.Pih_estimate + (1 - self.params.p[action, 0]) * (1 - self.Pih_estimate)
+            self.Pi_last_jump = new_estimate
+            self.last_jump = self.current_time
+        else:
+
+            denominator = 1 + np.divide(self.Pi_last_jump - self.pih1,
+                                        self.pih2 - self.Pi_last_jump) * np.exp(
+                -(self.pih2 - self.pih1) * (self.current_time - self.last_jump))
+            new_estimate = self.pih2 - np.divide(self.pih2 - self.pih1, denominator)
+
+        self.Pih_estimate = new_estimate
 
     def comp_intensity(self):
         self.intensity_estimate = self.params.lamb[1] * self.Pih_estimate + self.params.lamb[0] * (1 - self.Pih_estimate)
@@ -132,14 +139,17 @@ class HMJPEnv(gym.Env):
         :return: None
         """
         draw = np.random.random()
-        prob_of_switch = (1 - self.params.p[0, self.M]) * self.dt
+        if action > 0:
+            prob_of_switch = 1 - self.params.p[action, self.M]
+        else:
+            prob_of_switch = (1 - self.params.p[0, self.M]) * self.params.Lamb[self.M] * self.dt
         if draw < prob_of_switch:
             # state changes
             self.M = np.abs(self.M - 1)
             self.state_arrivals.append(self.current_time)
             self.state_history.append(self.M)
 
-    def arrival_event(self):
+    def arrival_event(self, action):
         self.accumulated_under_intensity_obs += self.dt * self.params.lamb[self.M]
         if self.accumulated_under_intensity_obs >= self._draw_observable_transition:
             self.arrivals.append(self.current_time)
@@ -150,25 +160,23 @@ class HMJPEnv(gym.Env):
                                           self.params.lamb[1] * self.Pih_estimate + self.params.lamb[0] * (
                                                   1 - self.Pih_estimate))
             self.Pi_last_jump = self.Pih_estimate
+            self.last_jump = self.current_time
             arrival = True
-            self.controlled = 0
         else:
             arrival = False
-            self.decay_Pih()
+            self.decay_Pih(action)
         rew = self.reward(arrival)
         self.comp_intensity()
         return rew
 
     def step(self, action: int):
-        if action > 0:
-            cost = self.params.c
-        else:
-            cost = 0.0
+
+        cost = self.params.c[action]
 
         self.current_step += 1
         self.current_time += self.dt
         self.state_transition(action)
-        rew = self.arrival_event()
+        rew = self.arrival_event(action)
         rew -= cost
         # if self.current_step > 2000:
         #     print('Here Jerry!')
@@ -199,15 +207,17 @@ class HMJPEnv(gym.Env):
         if not self.track_intensity:
             raise EnvironmentError('Intensity was not tracked.')
 
-        self.state_arrivals.append(self.current_time)
+        state_arrivals = self.state_arrivals.copy()
+
+        state_arrivals.append(self.current_time)
 
 
         fill_colors = ['salmon', 'green']
         fig, ax = plt.subplots()
-        [ax.axvline(line, color='blue', linewidth=0.1) for line in self.state_arrivals]
-        for i, st_arr in enumerate(self.state_arrivals[1:], start=1):
+        [ax.axvline(line, color='blue', linewidth=0.1) for line in state_arrivals]
+        for i, st_arr in enumerate(state_arrivals[1:], start=1):
             col = fill_colors[self.state_history[i - 1]]
-            ax.fill_betweenx([0, self.params.lamb[1]], self.state_arrivals[i - 1], self.state_arrivals[i], color=col,
+            ax.fill_betweenx([0, self.params.lamb[1]], state_arrivals[i - 1], state_arrivals[i], color=col,
                              alpha=0.5)
 
         ax.plot(self.time_vec, self.intensity_estimate_vec)
@@ -223,14 +233,17 @@ class HMJPEnv(gym.Env):
         if not self.track_intensity:
             raise EnvironmentError('Intensity was not tracked.')
         fill_colors = ['salmon', 'green']
-        self.state_arrivals.append(self.current_time)
+
+        state_arrivals = self.state_arrivals.copy()
+        state_arrivals.append(self.current_time)
+
         fig, ax = plt.subplots()
         ax.plot(self.time_vec, self.Pih_estimate_vec)
         ax.axhline(self.pih1, color='red', linewidth=0.5)
-        [ax.axvline(line, color='blue', linewidth=0.1) for line in self.state_arrivals]
-        for i, st_arr in enumerate(self.state_arrivals[1:], start=1):
+        [ax.axvline(line, color='blue', linewidth=0.1) for line in state_arrivals]
+        for i, st_arr in enumerate(state_arrivals[1:], start=1):
             col = fill_colors[self.state_history[i - 1]]
-            ax.fill_betweenx([0, 1.0], self.state_arrivals[i - 1], self.state_arrivals[i], color=col, alpha=0.5)
+            ax.fill_betweenx([0, 1.0], state_arrivals[i - 1], state_arrivals[i], color=col, alpha=0.5)
         ax.set_xlabel('Time')
         ax.set_ylabel(r'$\Pi_H(t)$')
 
@@ -253,14 +266,23 @@ class HMJPEnv(gym.Env):
     def __str__(self):
         return f'{self.__class__} -- pi1: {self.pih1}, pih2: {self.pih2}, lambdainf: {self.lambdainf}'
 
+    def true_intensity(self):
+        true_intensity_vec = np.ones_like(self.time_vec) * self.params.lamb[self.state_history[0]]
+        for i, arr in enumerate(self.state_arrivals):
+            true_intensity_vec[self.time_vec > self.state_arrivals[i]] = self.params.lamb[self.state_history[i]]
+
+        return true_intensity_vec
+
 
 if __name__ == '__main__':
     pars = HMJPParameters()
     # print(pars.lamb[0])
     env = HMJPEnv(pars)
     print(env)
-    for i in range(10000):
-        if not env.done:
-            env.step(1)
+    while env.current_time < 100:
+        env.step(3)
 
     print(env)
+    print(env.state_history)
+    plt.plot(env.true_intensity())
+    plt.show()
